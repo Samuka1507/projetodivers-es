@@ -12,16 +12,17 @@ def inicializar_banco():
     conn = conectar()
     cursor = conn.cursor()
     
-    # Tabelas Administrativas e de Clientes
+    # Tabela de Usuários Administrativos
     cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         usuario TEXT UNIQUE, senha TEXT)''')
     
+    # Tabela de Clientes ATUALIZADA (Nome, CPF e Senha)
     cursor.execute('''CREATE TABLE IF NOT EXISTS clientes (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        nome TEXT, telefone TEXT UNIQUE)''')
+                        nome TEXT, cpf TEXT UNIQUE, senha TEXT)''')
     
-    # Tabela de Produtos (Comidas, Bebidas, Ingressos, Lembrancinhas)
+    # Tabela de Produtos (Comidas, Bebidas, Ingressos)
     cursor.execute('''CREATE TABLE IF NOT EXISTS produtos (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         nome TEXT, preco REAL)''')
@@ -54,36 +55,50 @@ def acesso_visitante():
     print(" 📱 AUTOATENDIMENTO DO VISITANTE 📱 ")
     print("=" * 40)
     
-    telefone = input("Digite seu telefone (com DDD) para acessar: ").strip()
+    cpf = input("Digite seu CPF (apenas números) para acessar: ").strip()
     
-    if not telefone:
-        print("❌ O telefone é obrigatório para acessar.")
+    if not cpf:
+        print("❌ O CPF é obrigatório para acessar.")
         return
 
     conn = conectar()
     cursor = conn.cursor()
-    cursor.execute("SELECT nome FROM clientes WHERE telefone=?", (telefone,))
+    cursor.execute("SELECT nome, senha FROM clientes WHERE cpf=?", (cpf,))
     resultado = cursor.fetchone()
     
-    # Lógica de Cadastro Automático
+    # Lógica de Login ou Cadastro
     if resultado:
         nome_cliente = resultado[0]
-        print(f"\n✅ Que bom te ver de volta, {nome_cliente}!")
+        senha_cadastrada = resultado[1]
+        
+        senha_digitada = input("Digite sua senha: ").strip()
+        if senha_digitada == senha_cadastrada:
+            print(f"\n✅ Que bom te ver de volta, {nome_cliente}!")
+            conn.close()
+            menu_visitante(nome_cliente)
+        else:
+            print("❌ Senha incorreta! Acesso negado.")
+            conn.close()
     else:
         print("\n👋 Parece que é sua primeira vez aqui! Vamos fazer seu cadastro.")
         nome_bruto = input("Qual o seu nome completo? ").strip()
-        if not nome_bruto:
-            print("❌ Nome inválido. Operação cancelada.")
+        senha_nova = input("Crie uma senha de acesso: ").strip()
+        
+        if not nome_bruto or not senha_nova:
+            print("❌ Nome e senha são obrigatórios. Operação cancelada.")
             conn.close()
             return
             
         nome_cliente = string.capwords(nome_bruto)
-        cursor.execute("INSERT INTO clientes (nome, telefone) VALUES (?, ?)", (nome_cliente, telefone))
-        conn.commit()
-        print(f"✅ Cadastro realizado com sucesso! Seja bem-vindo(a), {nome_cliente}!")
-    
-    conn.close()
-    menu_visitante(nome_cliente)
+        try:
+            cursor.execute("INSERT INTO clientes (nome, cpf, senha) VALUES (?, ?, ?)", (nome_cliente, cpf, senha_nova))
+            conn.commit()
+            print(f"\n✅ Cadastro realizado com sucesso! Seja bem-vindo(a), {nome_cliente}!")
+            conn.close()
+            menu_visitante(nome_cliente)
+        except sqlite3.IntegrityError:
+            print("❌ Erro ao cadastrar. Verifique se os dados estão corretos.")
+            conn.close()
 
 def comprar_produto(nome_cliente):
     print("\n--- 🍔 COMPRAR COMIDA / PRODUTOS 🍿 ---")
@@ -325,7 +340,7 @@ if __name__ == "__main__":
         print(" 🎪 BEM-VINDO AO MAGICPARK TERMINAL 🎪 ")
         print("★" * 40)
         print("Quem está acessando o sistema?")
-        print("1. Sou um Visitante (Comprar / Agendar Brinquedo)")
+        print("1. Sou um Visitante (Login / Cadastro)")
         print("2. Sou da Administração")
         print("3. Encerrar Sistema")
         
