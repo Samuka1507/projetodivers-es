@@ -12,36 +12,36 @@ def inicializar_banco():
     conn = conectar()
     cursor = conn.cursor()
     
-    # Tabela de Usuários Administrativos
     cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         usuario TEXT UNIQUE, senha TEXT)''')
     
-    # Tabela de Clientes ATUALIZADA (Nome, CPF e Senha)
+    # Atualizado com dois saldos
     cursor.execute('''CREATE TABLE IF NOT EXISTS clientes (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        nome TEXT, cpf TEXT UNIQUE, senha TEXT)''')
+                        nome TEXT, cpf TEXT UNIQUE, senha TEXT,
+                        saldo_15 INTEGER DEFAULT 0,
+                        saldo_20 INTEGER DEFAULT 0)''')
     
-    # Tabela de Produtos (Comidas, Bebidas, Ingressos)
     cursor.execute('''CREATE TABLE IF NOT EXISTS produtos (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         nome TEXT, preco REAL)''')
     
-    # Tabela de Brinquedos (Controle de Vagas)
+    # Atualizado com o preço do brinquedo
     cursor.execute('''CREATE TABLE IF NOT EXISTS brinquedos (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        nome TEXT, capacidade_total INTEGER, vagas_disponiveis INTEGER)''')
+                        nome TEXT, capacidade_total INTEGER, vagas_disponiveis INTEGER,
+                        preco INTEGER)''')
                         
-    # Tabelas de Movimentação (Compras e Agendamentos)
     cursor.execute('''CREATE TABLE IF NOT EXISTS vendas (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         cliente_nome TEXT, produto_nome TEXT, qtde INTEGER, total REAL)''')
                         
+    # Atualizado com o preço gasto para devolver o ingresso certo em caso de cancelamento
     cursor.execute('''CREATE TABLE IF NOT EXISTS reservas (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        cliente_nome TEXT, brinquedo_nome TEXT)''')
+                        cliente_nome TEXT, brinquedo_nome TEXT, preco_gasto INTEGER)''')
     
-    # Criar usuário admin padrão se não existir
     cursor.execute("INSERT OR IGNORE INTO usuarios (usuario, senha) VALUES ('admin', '1234')")
     
     conn.commit()
@@ -50,308 +50,318 @@ def inicializar_banco():
 # ==========================================
 # MÓDULO: ÁREA DO VISITANTE (AUTOATENDIMENTO)
 # ==========================================
+
 def acesso_visitante():
     print("\n" + "=" * 40)
     print(" 📱 AUTOATENDIMENTO DO VISITANTE 📱 ")
     print("=" * 40)
     
-    cpf = input("Digite seu CPF (apenas números) para acessar: ").strip()
-    
-    if not cpf:
-        print("❌ O CPF é obrigatório para acessar.")
-        return
+    cpf = input("Digite seu CPF (apenas números): ").strip()
+    if not cpf: return
 
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute("SELECT nome, senha FROM clientes WHERE cpf=?", (cpf,))
     resultado = cursor.fetchone()
     
-    # Lógica de Login ou Cadastro
     if resultado:
-        nome_cliente = resultado[0]
-        senha_cadastrada = resultado[1]
-        
+        nome_cliente, senha_cadastrada = resultado
         senha_digitada = input("Digite sua senha: ").strip()
         if senha_digitada == senha_cadastrada:
-            print(f"\n✅ Que bom te ver de volta, {nome_cliente}!")
             conn.close()
-            menu_visitante(nome_cliente)
+            menu_visitante(nome_cliente, cpf)
         else:
-            print("❌ Senha incorreta! Acesso negado.")
+            print("❌ Senha incorreta!")
             conn.close()
     else:
-        print("\n👋 Parece que é sua primeira vez aqui! Vamos fazer seu cadastro.")
-        nome_bruto = input("Qual o seu nome completo? ").strip()
-        senha_nova = input("Crie uma senha de acesso: ").strip()
+        print("\n👋 Novo por aqui? Vamos te cadastrar!")
+        nome_bruto = input("Nome completo: ").strip()
+        senha_nova = input("Crie uma senha: ").strip()
         
-        if not nome_bruto or not senha_nova:
-            print("❌ Nome e senha são obrigatórios. Operação cancelada.")
-            conn.close()
-            return
-            
-        nome_cliente = string.capwords(nome_bruto)
-        try:
-            cursor.execute("INSERT INTO clientes (nome, cpf, senha) VALUES (?, ?, ?)", (nome_cliente, cpf, senha_nova))
+        if nome_bruto and senha_nova:
+            nome_cliente = string.capwords(nome_bruto)
+            cursor.execute("INSERT INTO clientes (nome, cpf, senha, saldo_15, saldo_20) VALUES (?, ?, ?, 0, 0)", 
+                           (nome_cliente, cpf, senha_nova))
             conn.commit()
-            print(f"\n✅ Cadastro realizado com sucesso! Seja bem-vindo(a), {nome_cliente}!")
+            print(f"✅ Bem-vindo, {nome_cliente}!")
             conn.close()
-            menu_visitante(nome_cliente)
-        except sqlite3.IntegrityError:
-            print("❌ Erro ao cadastrar. Verifique se os dados estão corretos.")
+            menu_visitante(nome_cliente, cpf)
+        else:
+            print("❌ Dados inválidos.")
             conn.close()
 
-def comprar_produto(nome_cliente):
-    print("\n--- 🍔 COMPRAR COMIDA / PRODUTOS 🍿 ---")
+def ver_perfil_e_ingressos(nome_cliente, cpf):
     conn = conectar()
     cursor = conn.cursor()
+    cursor.execute("SELECT saldo_15, saldo_20 FROM clientes WHERE cpf=?", (cpf,))
+    s15, s20 = cursor.fetchone()
     
+    print("\n" + "─" * 30)
+    print(f"👤 PERFIL: {nome_cliente}")
+    print(f"🎟️  INGRESSOS R$ 15: {s15} disponíveis")
+    print(f"🎟️  INGRESSOS R$ 20: {s20} disponíveis")
+    print("─" * 30)
+    
+    print("\n🎢 SUAS RESERVAS ATUAIS:")
+    cursor.execute("SELECT id, brinquedo_nome, preco_gasto FROM reservas WHERE cliente_nome=?", (nome_cliente,))
+    reservas = cursor.fetchall()
+    
+    if not reservas:
+        print("   Nenhuma reserva ativa.")
+    else:
+        for res in reservas:
+            print(f"   ID: {res[0]} | Brinquedo: {res[1]} (Categoria R$ {res[2]})")
+    print("─" * 30)
+    conn.close()
+    return reservas
+
+def comprar_produto(nome_cliente, cpf):
+    print("\n--- 🍔 LOJA E BILHETERIA 🍿 ---")
+    conn = conectar()
+    cursor = conn.cursor()
     cursor.execute("SELECT id, nome, preco FROM produtos")
     produtos = cursor.fetchall()
+    conn.close()
     
     if not produtos:
-        print("❌ Nenhuma opção disponível no momento. Fale com a gerência.")
-        conn.close()
+        print("❌ A loja está vazia no momento.")
         return
 
-    print("\n-- Cardápio / Lojinha --")
-    for prod in produtos:
-        print(f"[{prod[0]}] {prod[1]} - R$ {prod[2]:.2f}")
-    
-    try:
-        id_prod = int(input("\nDigite o número do item que deseja: "))
-        produto_selecionado = next((p for p in produtos if p[0] == id_prod), None)
-        
-        if not produto_selecionado:
-            print("❌ Item não encontrado.")
-            return
-            
-        qtde = int(input("Quantidade: "))
-        if qtde <= 0:
-            print("❌ A quantidade deve ser maior que zero.")
-            return
-            
-        nome_prod = produto_selecionado[1]
-        preco_unit = produto_selecionado[2]
-        total = qtde * preco_unit
+    carrinho = []
+    total_compra = 0.0
+    ingressos_15 = 0
+    ingressos_20 = 0
 
-        conn.execute("INSERT INTO vendas (cliente_nome, produto_nome, qtde, total) VALUES (?, ?, ?, ?)", 
-                     (nome_cliente, nome_prod, qtde, total))
-        conn.commit()
+    while True:
+        print("\n-- Cardápio / Lojinha --")
+        for prod in produtos:
+            print(f"[{prod[0]}] {prod[1]} - R$ {prod[2]:.2f}")
+        print("\n[0] FINALIZAR COMPRA E PAGAR")
+        print("[C] CANCELAR TUDO")
         
-        print("\n" + "-" * 30)
-        print("💳 COMPRA APROVADA!")
-        print(f"Item: {qtde}x {nome_prod}")
-        print(f"Total pago: R$ {total:.2f}")
+        escolha = input("\nDigite o número do item (ou 0 para pagar): ").strip().upper()
+        
+        if escolha == '0': break
+        elif escolha == 'C':
+            print("🛒 Compra cancelada.")
+            return
+
+        try:
+            id_prod = int(escolha)
+            item = next((p for p in produtos if p[0] == id_prod), None)
+            
+            if item:
+                qtde = int(input(f"Quantas unidades de '{item[1]}'? "))
+                if qtde > 0:
+                    subtotal = qtde * item[2]
+                    carrinho.append({'nome': item[1], 'qtde': qtde, 'subtotal': subtotal})
+                    total_compra += subtotal
+                    
+                    # Detectar tipo de ingresso comprado
+                    if "ingresso" in item[1].lower() or "passaporte" in item[1].lower():
+                        if item[2] == 15.0: ingressos_15 += qtde
+                        elif item[2] == 20.0: ingressos_20 += qtde
+                        
+                    print(f"✅ Adicionado! Valor do carrinho: R$ {total_compra:.2f}")
+                else:
+                    print("❌ Quantidade inválida.")
+            else:
+                print("❌ Item não encontrado.")
+        except ValueError:
+            print("❌ Entrada inválida.")
+
+    if carrinho:
+        print("\n" + "💳" * 15)
+        print(" RESUMO DA SUA COMPRA ")
+        print("💳" * 15)
+        for c in carrinho: print(f"{c['qtde']}x {c['nome']} ........... R$ {c['subtotal']:>6.2f}")
         print("-" * 30)
+        print(f"TOTAL A PAGAR:      R$ {total_compra:>6.2f}")
         
-    except ValueError:
-        print("❌ Entrada inválida. Digite apenas números.")
-    finally:
-        conn.close()
+        confirmar = input("\nConfirmar pagamento? (S/N): ").strip().upper()
+        if confirmar == 'S':
+            conn = conectar()
+            cursor = conn.cursor()
+            
+            for c in carrinho:
+                cursor.execute("INSERT INTO vendas (cliente_nome, produto_nome, qtde, total) VALUES (?, ?, ?, ?)", 
+                             (nome_cliente, c['nome'], c['qtde'], c['subtotal']))
+            
+            if ingressos_15 > 0: cursor.execute("UPDATE clientes SET saldo_15 = saldo_15 + ? WHERE cpf = ?", (ingressos_15, cpf))
+            if ingressos_20 > 0: cursor.execute("UPDATE clientes SET saldo_20 = saldo_20 + ? WHERE cpf = ?", (ingressos_20, cpf))
+                
+            conn.commit()
+            conn.close()
+            print("\n✅ Pagamento aprovado!")
+            if ingressos_15 > 0: print(f"🎟️  +{ingressos_15} ingresso(s) de R$ 15 adicionado(s)!")
+            if ingressos_20 > 0: print(f"🎟️  +{ingressos_20} ingresso(s) de R$ 20 adicionado(s)!")
+        else:
+            print("❌ Pagamento cancelado.")
 
-def reservar_brinquedo(nome_cliente):
-    print("\n--- 🎢 AGENDAR BRINQUEDO ---")
+def reservar_brinquedo(nome_cliente, cpf):
     conn = conectar()
     cursor = conn.cursor()
     
-    # Mostra apenas brinquedos com vagas > 0
-    cursor.execute("SELECT id, nome, vagas_disponiveis, capacidade_total FROM brinquedos WHERE vagas_disponiveis > 0")
+    cursor.execute("SELECT saldo_15, saldo_20 FROM clientes WHERE cpf=?", (cpf,))
+    s15, s20 = cursor.fetchone()
+    
+    cursor.execute("SELECT id, nome, vagas_disponiveis, preco FROM brinquedos WHERE vagas_disponiveis > 0")
     brinquedos = cursor.fetchall()
     
     if not brinquedos:
-        print("❌ Poxa! Todos os brinquedos estão lotados no momento ou não foram cadastrados.")
+        print("❌ Nenhum brinquedo disponível.")
         conn.close()
         return
 
-    print("\n-- Brinquedos com Vagas Abertas --")
+    print(f"\n--- 🎢 BRINQUEDOS DE R$ 15 (Seu saldo: {s15} ingressos) ---")
+    tem_15 = False
     for b in brinquedos:
-        print(f"[{b[0]}] {b[1]} - Vagas Livres: {b[2]}/{b[3]}")
+        if b[3] == 15:
+            print(f"[{b[0]}] {b[1]} (Vagas: {b[2]})")
+            tem_15 = True
+    if not tem_15: print("   Nenhum brinquedo de R$ 15 disponível no momento.")
+
+    print(f"\n--- 🎡 BRINQUEDOS DE R$ 20 (Seu saldo: {s20} ingressos) ---")
+    tem_20 = False
+    for b in brinquedos:
+        if b[3] == 20:
+            print(f"[{b[0]}] {b[1]} (Vagas: {b[2]})")
+            tem_20 = True
+    if not tem_20: print("   Nenhum brinquedo de R$ 20 disponível no momento.")
         
     try:
-        id_brinq = int(input("\nDigite o número do brinquedo que deseja ir: "))
-        brinquedo_selecionado = next((b for b in brinquedos if b[0] == id_brinq), None)
+        id_brinq = int(input("\nEscolha o ID do brinquedo (ou 0 para sair): "))
+        if id_brinq == 0: return
         
-        if not brinquedo_selecionado:
-            print("❌ Brinquedo não encontrado ou lotado.")
-            return
+        b_sel = next((b for b in brinquedos if b[0] == id_brinq), None)
+        
+        if b_sel:
+            preco_brinq = b_sel[3]
             
-        nome_brinquedo = brinquedo_selecionado[1]
-        vagas_atuais = brinquedo_selecionado[2]
-        
-        # Registra a reserva e diminui 1 vaga
-        cursor.execute("INSERT INTO reservas (cliente_nome, brinquedo_nome) VALUES (?, ?)", (nome_cliente, nome_brinquedo))
-        cursor.execute("UPDATE brinquedos SET vagas_disponiveis = ? WHERE id = ?", (vagas_atuais - 1, id_brinq))
-        conn.commit()
-        
-        print("\n" + "-" * 30)
-        print("🎟️  AGENDAMENTO CONFIRMADO!")
-        print(f"Você garantiu seu lugar no(a) {nome_brinquedo}.")
-        print("Vá até a fila no horário combinado!")
-        print("-" * 30)
-
+            # Validação de saldo
+            if preco_brinq == 15 and s15 <= 0:
+                print("❌ Você não tem ingressos de R$ 15. Compre na bilheteria.")
+            elif preco_brinq == 20 and s20 <= 0:
+                print("❌ Você não tem ingressos de R$ 20. Compre na bilheteria.")
+            else:
+                # Efetivar a reserva
+                cursor.execute("INSERT INTO reservas (cliente_nome, brinquedo_nome, preco_gasto) VALUES (?, ?, ?)", 
+                               (nome_cliente, b_sel[1], preco_brinq))
+                cursor.execute("UPDATE brinquedos SET vagas_disponiveis = vagas_disponiveis - 1 WHERE id = ?", (id_brinq,))
+                
+                if preco_brinq == 15:
+                    cursor.execute("UPDATE clientes SET saldo_15 = saldo_15 - 1 WHERE cpf = ?", (cpf,))
+                else:
+                    cursor.execute("UPDATE clientes SET saldo_20 = saldo_20 - 1 WHERE cpf = ?", (cpf,))
+                
+                conn.commit()
+                print(f"🎟️  Reserva confirmada em: {b_sel[1]} (Gasto 1 ingresso de R$ {preco_brinq})!")
+        else:
+            print("❌ Brinquedo não encontrado.")
     except ValueError:
-        print("❌ Entrada inválida. Digite apenas os números correspondentes.")
+        print("❌ Entrada inválida.")
     finally:
         conn.close()
 
-def menu_visitante(nome_cliente):
+def cancelar_reserva(nome_cliente, cpf):
+    print("\n--- ↩️  CANCELAR AGENDAMENTO ---")
+    reservas = ver_perfil_e_ingressos(nome_cliente, cpf)
+    
+    if not reservas: return
+
+    try:
+        id_res = int(input("\nDigite o ID da reserva que deseja CANCELAR (ou 0 para voltar): "))
+        if id_res == 0: return
+        
+        res_sel = next((r for r in reservas if r[0] == id_res), None)
+        
+        if res_sel:
+            preco_gasto = res_sel[2]
+            conn = conectar()
+            cursor = conn.cursor()
+            
+            cursor.execute("UPDATE brinquedos SET vagas_disponiveis = vagas_disponiveis + 1 WHERE nome = ?", (res_sel[1],))
+            
+            if preco_gasto == 15:
+                cursor.execute("UPDATE clientes SET saldo_15 = saldo_15 + 1 WHERE cpf = ?", (cpf,))
+            elif preco_gasto == 20:
+                cursor.execute("UPDATE clientes SET saldo_20 = saldo_20 + 1 WHERE cpf = ?", (cpf,))
+                
+            cursor.execute("DELETE FROM reservas WHERE id = ?", (id_res,))
+            
+            conn.commit()
+            conn.close()
+            print(f"✅ Reserva cancelada! Vaga devolvida e ingresso de R$ {preco_gasto} estornado para seu perfil.")
+        else:
+            print("❌ ID de reserva não encontrado.")
+    except ValueError:
+        print("❌ Digite um número válido.")
+
+def menu_visitante(nome_cliente, cpf):
     while True:
         print("\n" + "=" * 40)
-        print(f" 🎡 PAINEL DO VISITANTE: {nome_cliente.upper()} 🎡 ")
+        print(f" 🎡 MAGICPARK - OLÁ, {nome_cliente.upper()} 🎡 ")
         print("=" * 40)
-        print("1. Comprar Comida ou Produtos")
-        print("2. Agendar Fila nos Brinquedos")
-        print("3. Sair / Deslogar")
+        print("1. Ver meu Saldo e Reservas")
+        print("2. Comprar Ingressos / Comidas (🛒)")
+        print("3. Reservar Brinquedo")
+        print("4. Cancelar Reserva")
+        print("5. Sair")
         
-        opcao = input("\nO que você deseja fazer? (1-3): ").strip()
-        
-        if opcao == '1':
-            comprar_produto(nome_cliente)
-        elif opcao == '2':
-            reservar_brinquedo(nome_cliente)
-        elif opcao == '3':
-            print(f"\nAté logo, {nome_cliente}! Aproveite o parque!")
-            break
-        else:
-            print("❌ Opção inválida.")
+        op = input("\nOpção: ").strip()
+        if op == '1': ver_perfil_e_ingressos(nome_cliente, cpf)
+        elif op == '2': comprar_produto(nome_cliente, cpf)
+        elif op == '3': reservar_brinquedo(nome_cliente, cpf)
+        elif op == '4': cancelar_reserva(nome_cliente, cpf)
+        elif op == '5': break
 
 # ==========================================
-# MÓDULO: ÁREA DA GERÊNCIA (ADMIN)
+# MÓDULO: ADMINISTRAÇÃO (LOGIN: admin / 1234)
 # ==========================================
-def tela_login_admin():
-    print("\n--- 🔒 ACESSO RESTRITO (ADMINISTRAÇÃO) ---")
-    tentativas = 3
-    while tentativas > 0:
-        usuario = input("Usuário: ").strip()
-        senha = input("Senha: ").strip()
-        
-        conn = conectar()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM usuarios WHERE usuario=? AND senha=?", (usuario, senha))
-        resultado = cursor.fetchone()
-        conn.close()
-        
-        if resultado:
-            print("\n✅ Acesso Autorizado!")
-            menu_admin()
-            break
-        else:
-            tentativas -= 1
-            print(f"❌ Credenciais incorretas. Tentativas: {tentativas}\n")
-    
-    if tentativas == 0:
-        print("🔒 Acesso bloqueado. Retornando ao menu principal...")
-
-def cadastrar_produto():
-    print("\n--- 📦 CADASTRAR NOVO PRODUTO NO CARDÁPIO ---")
-    nome_bruto = input("Nome (Ex: Pipoca Doce): ").strip()
-    preco_str = input("Preço (R$): ").replace(",", ".").strip()
-    
-    if nome_bruto and preco_str:
-        nome_formatado = string.capwords(nome_bruto)
-        try:
-            preco = float(preco_str)
-            conn = conectar()
-            conn.execute("INSERT INTO produtos (nome, preco) VALUES (?, ?)", (nome_formatado, preco))
-            conn.commit()
-            conn.close()
-            print(f"✅ Produto '{nome_formatado}' adicionado ao sistema (R$ {preco:.2f})!")
-        except ValueError:
-            print("❌ Erro: Digite um valor numérico válido.")
-    else:
-        print("❌ Erro: Todos os campos são obrigatórios.")
-
-def cadastrar_brinquedo():
-    print("\n--- 🎢 CADASTRAR NOVO BRINQUEDO ---")
-    nome_bruto = input("Nome do Brinquedo (Ex: Roda Gigante): ").strip()
-    
-    if nome_bruto:
-        nome_formatado = string.capwords(nome_bruto)
-        try:
-            capacidade = int(input("Total de Vagas da Rodada: "))
-            if capacidade <= 0:
-                print("❌ A capacidade deve ser maior que zero.")
-                return
-                
-            conn = conectar()
-            conn.execute("INSERT INTO brinquedos (nome, capacidade_total, vagas_disponiveis) VALUES (?, ?, ?)", 
-                         (nome_formatado, capacidade, capacidade))
-            conn.commit()
-            conn.close()
-            print(f"✅ Brinquedo '{nome_formatado}' ativado com {capacidade} vagas!")
-        except ValueError:
-            print("❌ Erro: Digite um número inteiro.")
-    else:
-        print("❌ Erro: O nome é obrigatório.")
-
-def ver_relatorios():
-    print("\n--- 📊 RELATÓRIOS DO PARQUE ---")
-    conn = conectar()
-    cursor = conn.cursor()
-    
-    print("\n>> STATUS DOS BRINQUEDOS:")
-    cursor.execute("SELECT nome, vagas_disponiveis, capacidade_total FROM brinquedos")
-    brinqs = cursor.fetchall()
-    if not brinqs:
-        print("   Nenhum brinquedo cadastrado.")
-    for b in brinqs:
-        print(f"   {b[0]} -> Vagas: {b[1]}/{b[2]}")
-
-    print("\n>> TOTAL ARRECADADO EM VENDAS:")
-    cursor.execute("SELECT SUM(total) FROM vendas")
-    total_vendas = cursor.fetchone()[0]
-    total_vendas = total_vendas if total_vendas else 0.0
-    print(f"   Caixa Total: R$ {total_vendas:.2f}")
-    
-    conn.close()
-    input("\nPressione ENTER para voltar...")
-
 def menu_admin():
     while True:
-        print("\n" + "=" * 40)
-        print(" 👔 PAINEL DA GERÊNCIA 👔 ")
-        print("=" * 40)
-        print("1. Adicionar Produto / Comida")
-        print("2. Adicionar Brinquedo")
-        print("3. Ver Relatórios e Status das Vagas")
-        print("4. Voltar à Tela Inicial")
-        
-        opcao = input("\nEscolha uma opção (1-4): ").strip()
-        
-        if opcao == '1':
-            cadastrar_produto()
-        elif opcao == '2':
-            cadastrar_brinquedo()
-        elif opcao == '3':
-            ver_relatorios()
-        elif opcao == '4':
-            break
-        else:
-            print("❌ Opção inválida.")
+        print("\n--- 👔 GERÊNCIA ---")
+        print("1. Cadastrar Produto/Ingresso (Dica: Preço deve ser 15.0 ou 20.0 para ingressos)")
+        print("2. Cadastrar Brinquedo")
+        print("3. Relatório Geral")
+        print("4. Voltar")
+        op = input("Opção: ").strip()
+        if op == '1':
+            n = input("Nome do produto (Ex: Ingresso Normal): "); p = float(input("Preço: ").replace(",","."))
+            c = conectar(); c.execute("INSERT INTO produtos (nome, preco) VALUES (?,?)", (n,p)); c.commit(); c.close()
+            print("✅ Produto salvo!")
+        elif op == '2':
+            n = input("Nome do brinquedo: "); v = int(input("Capacidade: "))
+            while True:
+                try:
+                    p = int(input("Preço da Categoria do Brinquedo (15 ou 20): "))
+                    if p in [15, 20]: break
+                    print("❌ Digite apenas 15 ou 20.")
+                except ValueError: print("❌ Apenas números.")
+            c = conectar(); c.execute("INSERT INTO brinquedos (nome, capacidade_total, vagas_disponiveis, preco) VALUES (?,?,?,?)", (n,v,v,p)); c.commit(); c.close()
+            print("✅ Brinquedo salvo!")
+        elif op == '3':
+            c = conectar(); cur = c.cursor()
+            print("\nVAGAS:"); cur.execute("SELECT nome, vagas_disponiveis, capacidade_total, preco FROM brinquedos")
+            for r in cur.fetchall(): print(f" - {r[0]} (Cat. R${r[3]}): {r[1]}/{r[2]} vagas")
+            cur.execute("SELECT SUM(total) FROM vendas"); print(f"\nCAIXA: R$ {cur.fetchone()[0] or 0:.2f}")
+            c.close()
+        elif op == '4': break
+
+def tela_login_admin():
+    u = input("Usuário: "); s = input("Senha: ")
+    if u == 'admin' and s == '1234': menu_admin()
+    else: print("❌ Erro de acesso!")
 
 # ==========================================
-# EXECUÇÃO DO SCRIPT (TELA INICIAL)
+# INÍCIO
 # ==========================================
 if __name__ == "__main__":
     inicializar_banco()
-    
     while True:
-        print("\n" + "★" * 40)
-        print(" 🎪 BEM-VINDO AO MAGICPARK TERMINAL 🎪 ")
-        print("★" * 40)
-        print("Quem está acessando o sistema?")
-        print("1. Sou um Visitante (Login / Cadastro)")
-        print("2. Sou da Administração")
-        print("3. Encerrar Sistema")
-        
-        escolha = input("\nDigite a opção (1-3): ").strip()
-        
-        if escolha == '1':
-            acesso_visitante()
-        elif escolha == '2':
-            tela_login_admin()
-        elif escolha == '3':
-            print("\nDesligando os totens... Volte sempre! 🎢")
-            sys.exit()
-        else:
-            print("❌ Opção inválida. Escolha 1, 2 ou 3.")
+        print("\n" + "★" * 40 + "\n 🎪 MAGICPARK SYSTEM 🎪 \n" + "★" * 40)
+        print("1. Sou Visitante | 2. Administração | 3. Sair")
+        e = input("\nEscolha: ").strip()
+        if e == '1': acesso_visitante()
+        elif e == '2': tela_login_admin()
+        elif e == '3': sys.exit()
